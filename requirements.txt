@@ -1,0 +1,6 @@
+streamlit
+pandas
+pyotp
+qrcode
+passlib
+argon2-cffi
