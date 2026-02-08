@@ -38,7 +38,31 @@ def init_db():
                 description TEXT
             )
         ''')
+
+        # Logs table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL,
+                action TEXT NOT NULL,
+                details TEXT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
         conn.commit()
+
+def add_log(username, action, details=""):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO logs (username, action, details) VALUES (?, ?, ?)",
+            (username, action, details)
+        )
+        conn.commit()
+
+def get_logs():
+    with get_db() as conn:
+        return pd.read_sql_query("SELECT * FROM logs ORDER BY timestamp DESC", conn)
 
 # --- User Operations ---
 def add_user(username, password_hash, totp_secret):
