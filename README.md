@@ -1,6 +1,6 @@
 **Information Assurance and Security**
 
-**Group Name \_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_		Section: \_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_**
+**Group Name: Irregs		Section: Mixed**
 
 **Project Rubric**
 
