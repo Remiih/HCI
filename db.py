@@ -12,20 +12,32 @@ def get_db():
     finally:
         conn.close()
 
+import auth # Need to hash password
+
+# ... (imports)
+
 def init_db():
     """Initialize the database tables."""
     with get_db() as conn:
         cursor = conn.cursor()
         
+        # ... (Create tables logic existing) ...
         # Users table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
-                totp_secret TEXT NOT NULL
+                totp_secret TEXT NOT NULL,
+                role TEXT DEFAULT 'user'
             )
         ''')
+        
+        # Migration: Check if role column exists for existing DBs
+        cursor.execute("PRAGMA table_info(users)")
+        columns = [info[1] for info in cursor.fetchall()]
+        if 'role' not in columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'")
         
         # Inventory table
         cursor.execute('''
@@ -51,6 +63,23 @@ def init_db():
         ''')
         conn.commit()
 
+    # --- Default Admin Creation ---
+    # Check if admin exists
+    if not get_user('admin'):
+        # Create default admin
+        # Username: admin
+        # Password: Admin123
+        # Secret: JBSWY3DPEHPK3PXP (Standard base32 secret for testing)
+        
+        hardcoded_pass = "Admin123."
+        hardcoded_secret = "JBSWY3DPEHPK3PXP" 
+        
+        hashed = auth.hash_password(hardcoded_pass)
+        
+        if add_user('admin', hashed, hardcoded_secret, role='admin'):
+            add_log('SYSTEM', "INIT_ADMIN", "Created default admin user.")
+            print("Default Admin Created: admin / Admin123")
+
 def add_log(username, action, details=""):
     with get_db() as conn:
         cursor = conn.cursor()
@@ -65,13 +94,21 @@ def get_logs():
         return pd.read_sql_query("SELECT * FROM logs ORDER BY timestamp DESC", conn)
 
 # --- User Operations ---
-def add_user(username, password_hash, totp_secret):
+# Updated to support 'role' (default 'user')
+def add_user(username, password_hash, totp_secret, role='user'):
     try:
         with get_db() as conn:
             cursor = conn.cursor()
+            
+            # Check if role column exists, if not add it (Migration)
+            cursor.execute("PRAGMA table_info(users)")
+            columns = [info[1] for info in cursor.fetchall()]
+            if 'role' not in columns:
+                cursor.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'")
+                
             cursor.execute(
-                "INSERT INTO users (username, password_hash, totp_secret) VALUES (?, ?, ?)",
-                (username, password_hash, totp_secret)
+                "INSERT INTO users (username, password_hash, totp_secret, role) VALUES (?, ?, ?, ?)",
+                (username, password_hash, totp_secret, role)
             )
             conn.commit()
             return True

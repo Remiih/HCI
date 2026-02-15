@@ -42,9 +42,18 @@ st.markdown("""
         text-align: center;
     }
     
-    /* Typography */
     h1, h2, h3 {
         font-family: 'Arial', sans-serif;
+    }
+    
+    /* Admin Badge */
+    .admin-badge {
+        background-color: #ffca28;
+        color: black;
+        padding: 5px 10px;
+        border-radius: 10px;
+        font-weight: bold;
+        font-size: 0.8em;
     }
     
     /* OTP Card Styling */
@@ -127,6 +136,7 @@ def login_view():
                         user = db.get_user(username)
                         if user and auth.verify_password(password, user[2]):
                             st.session_state.username = username
+                            st.session_state.role = user[4] # role is at index 4 now
                             st.session_state.auth_step = 'otp'
                             db.add_log(username, "LOGIN_ATTEMPT", "Valid credentials, awaiting 2FA.")
                             st.rerun()
@@ -207,7 +217,8 @@ def register_view():
                     st.session_state.temp_reg_data = {
                         'username': new_user,
                         'password': new_pass,
-                        'secret': secret
+                        'secret': secret,
+                        'role': 'user' # Default to user
                     }
                     st.session_state.auth_step = 'register_otp'
                     st.rerun()
@@ -273,8 +284,11 @@ def register_otp_view():
         if st.button("Verify & Register"):
             if auth.verify_totp(data['secret'], code):
                 hashed = auth.hash_password(data['password'])
-                if db.add_user(data['username'], hashed, data['secret']):
+                # Use the role from temp data (defaults to 'user', but enables flexibility)
+                role = data.get('role', 'user') 
+                if db.add_user(data['username'], hashed, data['secret'], role):
                     st.success("Registration Successful!")
+                    db.add_log(data['username'], "USER_REGISTER", f"New user registered as {role}")
                     st.session_state.temp_reg_data = {}
                     st.session_state.auth_step = 'login'
                     time.sleep(2)
@@ -304,9 +318,11 @@ def otp_view():
             if user:
                 secret = user[3]
                 if auth.verify_totp(secret, code):
+                    st.session_state.role = user[4] # Refresh role from DB
                     st.session_state.authenticated = True
                     st.session_state.auth_step = 'dashboard'
                     db.add_log(st.session_state.username, "LOGIN", "Successful login via 2FA.")
+                    st.rerun()
                     st.rerun()
                 else:
                     st.error("Incorrect or Expired OTP")
@@ -324,6 +340,14 @@ def dashboard_view():
     """, unsafe_allow_html=True)
 
     st.sidebar.title(f"User: {st.session_state.username}")
+    
+    # Show Role Badge
+    role = st.session_state.get('role', 'user')
+    if role == 'admin':
+        st.sidebar.markdown('<span class="admin-badge">ADMIN ACCESS</span>', unsafe_allow_html=True)
+    else:
+        st.sidebar.caption("Standard User (Read-Only)")
+
     if st.sidebar.button("Logout"):
         db.add_log(st.session_state.username, "LOGOUT", "User logged out.")
         logout()
@@ -333,25 +357,63 @@ def dashboard_view():
     # --- Search ---
     search_query = st.text_input("🔍 Search Inventory", placeholder="Search by name or category...")
 
-    # --- Add Item ---
-    with st.expander("➕ Add New Item"):
-        with st.form("add_item_form"):
-            new_name = st.text_input("Item Name")
-            c1, c2, c3 = st.columns(3)
-            with c1: new_cat = st.text_input("Category")
-            with c2: new_qty = st.number_input("Quantity", min_value=0, step=1)
-            with c3: new_price = st.number_input("Price (PHP)", min_value=0.0, step=0.01)
-            
-            new_desc = st.text_area("Description")
-            
-            if st.form_submit_button("Add Item"):
-                if new_name:
-                    db.add_item(new_name, new_cat, new_qty, new_price, new_desc)
-                    db.add_log(st.session_state.username, "ADD_ITEM", f"Added {new_name} (Qty: {new_qty})")
-                    st.success(f"Added {new_name}")
-                    st.rerun()
-                else:
-                    st.error("Item Name is required")
+    # --- Add Item (ADMIN ONLY) ---
+    if role == 'admin':
+        with st.expander("➕ Add New Item"):
+            with st.form("add_item_form"):
+                new_name = st.text_input("Item Name")
+                c1, c2, c3 = st.columns(3)
+                with c1: new_cat = st.text_input("Category")
+                with c2: new_qty = st.number_input("Quantity", min_value=0, step=1)
+                with c3: new_price = st.number_input("Price (PHP)", min_value=0.0, step=0.01)
+                
+                new_desc = st.text_area("Description")
+                
+                if st.form_submit_button("Add Item"):
+                    if new_name:
+                        db.add_item(new_name, new_cat, new_qty, new_price, new_desc)
+                        db.add_log(st.session_state.username, "ADD_ITEM", f"Added {new_name} (Qty: {new_qty})")
+                        st.success(f"Added {new_name}")
+                        st.rerun()
+                    else:
+                        st.error("Item Name is required")
+    
+    # --- Admin User Creation (ADMIN ONLY) ---
+    if role == 'admin':
+        with st.expander("🛡️ Create Admin User"):
+             st.info("Create a new Administrator account.")
+             with st.form("create_admin_form"):
+                 new_admin_user = st.text_input("New Admin Username")
+                 new_admin_pass = st.text_input("New Admin Password", type="password")
+                 
+                 if st.form_submit_button("Create Admin"):
+                    pass_admin, msg_admin = auth.validate_password(new_admin_pass)
+                    if not new_admin_user or not new_admin_pass:
+                        st.error("Fields cannot be empty")
+                    elif not pass_admin:
+                        st.error(msg_admin)
+                    elif db.get_user(new_admin_user):
+                         st.error("User already exists")
+                    else:
+                         # Direct Admin Creation Flow (Auto-generate secret for them or show it?)
+                         # For simplicity in this flow, we'll generate regular flow or minimal flow.
+                         # Let's generate a secret and show the QR code immediately or just the secret.
+                         # Actually rubric says "pre made admin user and in their page there should be a button for creating another admin user"
+                         
+                         secret = auth.generate_totp_secret()
+                         hashed = auth.hash_password(new_admin_pass)
+                         if db.add_user(new_admin_user, hashed, secret, role='admin'):
+                             db.add_log(st.session_state.username, "ADMIN_CREATE_ADMIN", f"Created new admin: {new_admin_user}")
+                             st.success(f"Admin '{new_admin_user}' created!")
+                             st.warning("⚠️ Please scan this QR code immediately. It will not be shown again.")
+                             
+                             uri = auth.get_totp_uri(new_admin_user, secret)
+                             qr = auth.generate_qr_code(uri)
+                             st.image(qr, width=200, caption=f"TOTP Setup for {new_admin_user}")
+                             st.write(f"Secret Key: `{secret}`")
+                         else:
+                             st.error("Database Error")
+
 
     # --- View Items ---
     st.subheader("Current Inventory")
@@ -368,47 +430,49 @@ def dashboard_view():
         display_df.columns = ['ID', 'Name', 'Category', 'Quantity', 'Price (PHP)', 'Description']
         st.dataframe(display_df, use_container_width=True, hide_index=True)
         
-        st.divider()
-        st.subheader("Manage Items")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.caption("Delete Item")
-            delete_id = st.selectbox("Select Item to Delete", items['id'].tolist(), format_func=lambda x: f"ID: {x} - {items[items['id']==x]['name'].values[0]}")
-            
-            if st.session_state.username == 'admin':
-                if st.button("Delete Selected"):
-                    item_name = items[items['id']==delete_id]['name'].values[0]
-                    db.delete_item(delete_id)
-                    db.add_log(st.session_state.username, "DELETE_ITEM", f"Deleted {item_name} (ID: {delete_id})")
-                    st.warning(f"Deleted Item ID {delete_id}")
-                    time.sleep(0.5)
-                    st.rerun()
-            else:
-                st.button("Delete Selected", disabled=True, help="Only user 'admin' can delete items.")
-                st.caption("⚠ Only 'admin' can delete items.")
-
-        with col2:
-             st.caption("Quick Update Quantity")
-             edit_id = st.selectbox("Select Item to Update", items['id'].tolist(), key='edit_select', format_func=lambda x: f"ID: {x} - {items[items['id']==x]['name'].values[0]}")
-             current_qty = items[items['id']==edit_id]['quantity'].values[0]
-             new_qty_val = st.number_input(f"Update Quantity for ID {edit_id}", value=int(current_qty))
-             if st.button("Update Quantity"):
-                 row = items[items['id']==edit_id].iloc[0]
-                 db.update_item(edit_id, row['name'], row['category'], new_qty_val, row['price'], row['description'])
-                 db.add_log(st.session_state.username, "UPDATE_ITEM", f"Updated {row['name']} quantity to {new_qty_val}")
-                 st.success("Updated")
-                 time.sleep(0.5)
-                 st.rerun()
+        # --- Manage Items (ADMIN ONLY) ---
+        if role == 'admin':
+             st.divider()
+             st.subheader("Manage Items")
+             
+             col1, col2 = st.columns(2)
+             
+             with col1:
+                 st.caption("Delete Item")
+                 delete_id = st.selectbox("Select Item to Delete", items['id'].tolist(), format_func=lambda x: f"ID: {x} - {items[items['id']==x]['name'].values[0]}")
+                 
+                 if st.button("Delete Selected"):
+                     item_name = items[items['id']==delete_id]['name'].values[0]
+                     db.delete_item(delete_id)
+                     db.add_log(st.session_state.username, "DELETE_ITEM", f"Deleted {item_name} (ID: {delete_id})")
+                     st.warning(f"Deleted Item ID {delete_id}")
+                     time.sleep(0.5)
+                     st.rerun()
+     
+             with col2:
+                  st.caption("Quick Update Quantity")
+                  edit_id = st.selectbox("Select Item to Update", items['id'].tolist(), key='edit_select', format_func=lambda x: f"ID: {x} - {items[items['id']==x]['name'].values[0]}")
+                  current_qty = items[items['id']==edit_id]['quantity'].values[0]
+                  new_qty_val = st.number_input(f"Update Quantity for ID {edit_id}", value=int(current_qty))
+                  if st.button("Update Quantity"):
+                      row = items[items['id']==edit_id].iloc[0]
+                      db.update_item(edit_id, row['name'], row['category'], new_qty_val, row['price'], row['description'])
+                      db.add_log(st.session_state.username, "UPDATE_ITEM", f"Updated {row['name']} quantity to {new_qty_val}")
+                      st.success("Updated")
+                      time.sleep(0.5)
+                      st.rerun()
+        else:
+            st.info("🔒 You are in View-Only mode. Contact an Admin to make changes.")
 
     else:
         st.info("No items in inventory.")
 
-    with st.expander("📜 Activity Logs (Security Audit)"):
-        st.caption("Monitoring user actions for security and accountability.")
-        logs = db.get_logs()
-        st.dataframe(logs, use_container_width=True, hide_index=True)
+    # --- Activity Logs (ADMIN ONLY) ---
+    if role == 'admin':
+        with st.expander("📜 Activity Logs (Security Audit)"):
+            st.caption("Monitoring user actions for security and accountability.")
+            logs = db.get_logs()
+            st.dataframe(logs, use_container_width=True, hide_index=True)
 
 # --- Router ---
 if not st.session_state.authenticated:
