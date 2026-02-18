@@ -330,6 +330,92 @@ def otp_view():
                 st.session_state.auth_step = 'login'
                 st.rerun()
 
+# --- Confirmation Dialogs ---
+
+@st.dialog("Confirm Deletion")
+def confirm_delete_dialog(item_id, item_name):
+    st.warning(f"Are you sure you want to delete **{item_name}** (ID: {item_id})?")
+    st.write("This action cannot be undone.")
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("Yes, Delete", type="primary"):
+            db.delete_item(item_id)
+            db.add_log(st.session_state.username, "DELETE_ITEM", f"Deleted {item_name} (ID: {item_id})")
+            st.success(f"Deleted Item ID {item_id}")
+            time.sleep(1)
+            st.rerun()
+    with c2:
+        if st.button("Cancel"):
+            st.rerun()
+
+@st.dialog("Confirm New Item")
+def confirm_add_item_dialog(name, cat, qty, price, desc):
+    st.write("Please confirm the following item details:")
+    st.write(f"- **Name:** {name}")
+    st.write(f"- **Category:** {cat}")
+    st.write(f"- **Quantity:** {qty}")
+    st.write(f"- **Price:** PHP {price:,.2f}")
+    st.write(f"- **Description:** {desc}")
+    
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("Confirm and Add", type="primary"):
+            db.add_item(name, cat, qty, price, desc)
+            db.add_log(st.session_state.username, "ADD_ITEM", f"Added {name} (Qty: {qty})")
+            st.success(f"Added {name}")
+            time.sleep(1)
+            st.rerun()
+    with c2:
+        if st.button("Cancel"):
+            st.rerun()
+
+@st.dialog("Confirm Update")
+def confirm_update_item_dialog(item_id, name, cat, qty, price, desc):
+    st.write(f"Are you sure you want to update item **{name}** (ID: {item_id})?")
+    st.write("New Details:")
+    st.write(f"- **Category:** {cat}")
+    st.write(f"- **Quantity:** {qty}")
+    st.write(f"- **Price:** PHP {price:,.2f}")
+    st.write(f"- **Description:** {desc}")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("Confirm Update", type="primary"):
+            db.update_item(item_id, name, cat, qty, price, desc)
+            db.add_log(st.session_state.username, "UPDATE_ITEM", f"Updated {name} (ID: {item_id}) details.")
+            st.success("Item Updated Successfully!")
+            time.sleep(1)
+            st.rerun()
+    with c2:
+        if st.button("Cancel"):
+            st.rerun()
+
+@st.dialog("Confirm Admin Creation")
+def confirm_create_admin_dialog(new_admin_user, new_admin_pass):
+    st.warning(f"Are you sure you want to create a new Administrator: **{new_admin_user}**?")
+    
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("Yes, Create Admin", type="primary"):
+             secret = auth.generate_totp_secret()
+             hashed = auth.hash_password(new_admin_pass)
+             if db.add_user(new_admin_user, hashed, secret, role='admin'):
+                 db.add_log(st.session_state.username, "ADMIN_CREATE_ADMIN", f"Created new admin: {new_admin_user}")
+                 st.success(f"Admin '{new_admin_user}' created!")
+                 st.warning("⚠️ Please scan this QR code immediately. It will not be shown again.")
+                 
+                 uri = auth.get_totp_uri(new_admin_user, secret)
+                 qr = auth.generate_qr_code(uri)
+                 st.image(qr, width=200, caption=f"TOTP Setup for {new_admin_user}")
+                 st.write(f"Secret Key: `{secret}`")
+                 if st.button("Done"):
+                     st.rerun()
+             else:
+                 st.error("Database Error")
+    with c2:
+        if st.button("Cancel"):
+            st.rerun()
+
 def dashboard_view():
     # Reset styles to prevent the login/register page CSS from affecting dashboard buttons
     st.markdown("""
@@ -356,25 +442,38 @@ def dashboard_view():
 
     # --- Search ---
     search_query = st.text_input("🔍 Search Inventory", placeholder="Search by name or category...")
+    
+    # Fetch items early for category dropdowns
+    items = db.get_items()
 
     # --- Add Item (ADMIN ONLY) ---
     if role == 'admin':
         with st.expander("➕ Add New Item"):
             with st.form("add_item_form"):
                 new_name = st.text_input("Item Name")
-                c1, c2, c3 = st.columns(3)
-                with c1: new_cat = st.text_input("Category")
-                with c2: new_qty = st.number_input("Quantity", min_value=0, step=1)
-                with c3: new_price = st.number_input("Price (PHP)", min_value=0.0, step=0.01)
+                
+                # Smart Category Selection
+                existing_cats = []
+                if not items.empty and 'category' in items.columns:
+                     existing_cats = items['category'].dropna().unique().tolist()
+                
+                cat_options = ["➕ Create New Category"] + existing_cats
+                selected_cat = st.selectbox("Category", cat_options)
+                
+                if selected_cat == "➕ Create New Category":
+                    new_cat = st.text_input("Enter New Category Name")
+                else:
+                    new_cat = selected_cat
+
+                c1, c2 = st.columns(2)
+                with c1: new_qty = st.number_input("Quantity", min_value=0, step=1)
+                with c2: new_price = st.number_input("Price (PHP)", min_value=0.0, step=0.01)
                 
                 new_desc = st.text_area("Description")
                 
                 if st.form_submit_button("Add Item"):
                     if new_name:
-                        db.add_item(new_name, new_cat, new_qty, new_price, new_desc)
-                        db.add_log(st.session_state.username, "ADD_ITEM", f"Added {new_name} (Qty: {new_qty})")
-                        st.success(f"Added {new_name}")
-                        st.rerun()
+                        confirm_add_item_dialog(new_name, new_cat, new_qty, new_price, new_desc)
                     else:
                         st.error("Item Name is required")
     
@@ -395,29 +494,13 @@ def dashboard_view():
                     elif db.get_user(new_admin_user):
                          st.error("User already exists")
                     else:
-                         # Direct Admin Creation Flow (Auto-generate secret for them or show it?)
-                         # For simplicity in this flow, we'll generate regular flow or minimal flow.
-                         # Let's generate a secret and show the QR code immediately or just the secret.
-                         # Actually rubric says "pre made admin user and in their page there should be a button for creating another admin user"
-                         
-                         secret = auth.generate_totp_secret()
-                         hashed = auth.hash_password(new_admin_pass)
-                         if db.add_user(new_admin_user, hashed, secret, role='admin'):
-                             db.add_log(st.session_state.username, "ADMIN_CREATE_ADMIN", f"Created new admin: {new_admin_user}")
-                             st.success(f"Admin '{new_admin_user}' created!")
-                             st.warning("⚠️ Please scan this QR code immediately. It will not be shown again.")
-                             
-                             uri = auth.get_totp_uri(new_admin_user, secret)
-                             qr = auth.generate_qr_code(uri)
-                             st.image(qr, width=200, caption=f"TOTP Setup for {new_admin_user}")
-                             st.write(f"Secret Key: `{secret}`")
-                         else:
-                             st.error("Database Error")
+                         confirm_create_admin_dialog(new_admin_user, new_admin_pass)
 
 
     # --- View Items ---
     st.subheader("Current Inventory")
-    items = db.get_items()
+    # items already fetched at top
+
     
     if not items.empty:
         if search_query:
@@ -443,24 +526,41 @@ def dashboard_view():
                  
                  if st.button("Delete Selected"):
                      item_name = items[items['id']==delete_id]['name'].values[0]
-                     db.delete_item(delete_id)
-                     db.add_log(st.session_state.username, "DELETE_ITEM", f"Deleted {item_name} (ID: {delete_id})")
-                     st.warning(f"Deleted Item ID {delete_id}")
-                     time.sleep(0.5)
-                     st.rerun()
+                     confirm_delete_dialog(delete_id, item_name)
      
              with col2:
-                  st.caption("Quick Update Quantity")
-                  edit_id = st.selectbox("Select Item to Update", items['id'].tolist(), key='edit_select', format_func=lambda x: f"ID: {x} - {items[items['id']==x]['name'].values[0]}")
-                  current_qty = items[items['id']==edit_id]['quantity'].values[0]
-                  new_qty_val = st.number_input(f"Update Quantity for ID {edit_id}", value=int(current_qty))
-                  if st.button("Update Quantity"):
-                      row = items[items['id']==edit_id].iloc[0]
-                      db.update_item(edit_id, row['name'], row['category'], new_qty_val, row['price'], row['description'])
-                      db.add_log(st.session_state.username, "UPDATE_ITEM", f"Updated {row['name']} quantity to {new_qty_val}")
-                      st.success("Updated")
-                      time.sleep(0.5)
-                      st.rerun()
+                  st.caption("Edit Item Details")
+                  edit_id = st.selectbox("Select Item to Edit", items['id'].tolist(), key='edit_select', format_func=lambda x: f"ID: {x} - {items[items['id']==x]['name'].values[0]}")
+                  
+                  # Pre-fill logic
+                  current_item = items[items['id']==edit_id].iloc[0]
+                  
+                  with st.form(key=f"edit_form_{edit_id}"):
+                      upd_name = st.text_input("Name", value=current_item['name'])
+                      
+                      # Category Logic for Edit
+                      existing_cats = items['category'].dropna().unique().tolist()
+                      cat_options = ["➕ Create New Category"] + existing_cats
+                      
+                      # Handle current category selection
+                      current_cat_index = 0
+                      if current_item['category'] in existing_cats:
+                          current_cat_index = cat_options.index(current_item['category'])
+                      
+                      selected_cat_edit = st.selectbox("Category", cat_options, index=current_cat_index)
+                      if selected_cat_edit == "➕ Create New Category":
+                          upd_cat = st.text_input("New Category Name", value=current_item['category'])
+                      else:
+                          upd_cat = selected_cat_edit
+                          
+                      c1, c2 = st.columns(2)
+                      with c1: upd_qty = st.number_input("Quantity", value=int(current_item['quantity']), min_value=0)
+                      with c2: upd_price = st.number_input("Price (PHP)", value=float(current_item['price']), min_value=0.0, step=0.01)
+                      
+                      upd_desc = st.text_area("Description", value=current_item['description'] if current_item['description'] else "")
+                      
+                      if st.form_submit_button("Update Item"):
+                           confirm_update_item_dialog(edit_id, upd_name, upd_cat, upd_qty, upd_price, upd_desc)
         else:
             st.info("🔒 You are in View-Only mode. Contact an Admin to make changes.")
 
